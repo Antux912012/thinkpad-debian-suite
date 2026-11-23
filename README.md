@@ -4,164 +4,248 @@
 [![Plymouth](https://img.shields.io/badge/Plymouth-BGRT%20Theme-blue?logo=linux&logoColor=white)](https://gitlab.freedesktop.org/plymouth/plymouth)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-An all-in-one, idempotent **super script** (`thinkpad-debian-suite.sh`) that unifies:
-1. **[`thinkpad-debian-optimizer`](https://github.com/Antux912012/thinkpad-debian-optimizer)** — System, NVMe SSD lifespan, ZRAM/zswap, Intel VA-API, battery charge thresholds, suspend-then-hibernate, Intel Wireless-AC 8265/8275, TCP BBR, and 1080p GRUB optimization.
-2. **Realtek ALC298 Microphone & Bluetooth A2DP Audio Fix** — Automatic PipeWire/ALSA calibration and persistent systemd user login service (runs seamlessly in the invoking desktop user's session even when launched with `sudo`).
-3. **[`debian-bgrt-plymouth`](https://github.com/Antux912012/debian-bgrt-plymouth)** — Fedora-style UEFI ACPI BGRT Plymouth boot splash with Papirus Debian watermark variants (`text`, `badge`, `swirl`), seamless flicker-free silent boot (hidden GRUB, silenced `Loading Linux...`, Early KMS), and full one-command rollback.
+This repository contains `thinkpad-debian-suite.sh`. This script combines three tools into one tool:
 
-**Target Hardware Profile:**
-- **Laptop:** Lenovo ThinkPad 13 2nd Gen (Intel Core i5-7200U, Intel HD Graphics 620, 1920x1080)
-- **Storage:** Intel NVMe SSD (e.g., Intel SSD 600p Series)
-- **Wi-Fi:** Intel Dual Band Wireless-AC (`iwlwifi` / `iwlmvm`, e.g., 8265 / 8275)
-- **Audio:** Realtek ALC298 (HDA Intel PCH) + PipeWire / WirePlumber
-- **OS:** Debian 12 (Bookworm), 13 (Trixie), or Forky / Sid
+1. **System Optimizer** from `thinkpad-debian-optimizer` (`optimize_thinkpad.sh`).
+2. **Audio Optimizer** from `thinkpad-debian-optimizer` (`optimize_audio.sh`).
+3. **BGRT Plymouth and Silent Boot Tool** from `debian-bgrt-plymouth` (`debian-bgrt.sh`).
+
+Use this script to optimize a Lenovo ThinkPad laptop that runs Debian GNU/Linux.
 
 ---
+
+## 1. Supported Hardware and Software
+
+This script is tuned for this hardware and software profile:
+
+| Component | Target Specification |
+| :--- | :--- |
+| **Laptop** | Lenovo ThinkPad 13 2nd Gen (Intel Core i5-7200U, Intel HD Graphics 620, 1920x1080) |
+| **Storage** | Intel NVMe SSD (such as Intel SSD 600p Series) |
+| **Wireless** | Intel Dual Band Wireless-AC (`iwlwifi` and `iwlmvm`, such as 8265 or 8275) |
+| **Audio** | Realtek ALC298 (`HDA Intel PCH`) with PipeWire and WirePlumber |
+| **Firmware** | UEFI with ACPI BGRT support |
+| **Operating System** | Debian 12 (Bookworm), Debian 13 (Trixie), or Debian Testing / Sid (Forky) |
+
+---
+
+## 2. Safety Information
 
 > [!WARNING]
-> ### Experimental Status & Disclaimer of Liability
+> **CAUTION:** This script changes core system files. It changes `/etc/fstab`, `/etc/default/grub`, `/etc/default/grub.d/`, `/etc/grub.d/10_linux`, `/etc/initramfs-tools/modules`, `sysctl` rules, `modprobe` options, `udev` rules, and Plymouth themes. It also rebuilds the `initramfs` image.
 >
-> This script modifies core system configuration files (`/etc/fstab`, `/etc/default/grub`, `/etc/default/grub.d/`, `/etc/grub.d/10_linux`, `/etc/initramfs-tools/modules`, `sysctl`, `modprobe`, `udev`, Plymouth themes) and rebuilds the `initramfs`.
-> It is provided **"AS IS"**, without warranty of any kind. Always keep backups of important data and know how to access GRUB recovery entries (hold `Esc` or `Shift` at power-on when hidden GRUB is enabled).
+> Before you run this script:
+> 1. Back up your important files.
+> 2. Make sure that you know how to open the GRUB menu at boot. Hold `Esc` or `Shift` when the computer starts to open a hidden GRUB menu.
+> 3. Use this script at your own risk. The author provides this software "AS IS" without warranty.
 
 ---
 
-## Quick Start
+## 3. Prerequisites
 
-```bash
-git clone https://github.com/Antux912012/thinkpad-debian-suite.git
-cd thinkpad-debian-suite
-chmod +x thinkpad-debian-suite.sh
-./thinkpad-debian-suite.sh
-```
+Before you start, make sure that your system meets these conditions:
 
-Running `./thinkpad-debian-suite.sh` with no arguments executes the **complete suite** in one go:
-1. Auto-elevates to root via `sudo` / `pkexec` while remembering your desktop user for the PipeWire audio step.
-2. Installs required packages and Intel iHD VA-API hardware acceleration.
-3. Optimizes NVMe SSD lifespan, ZRAM/zswap, THP, thermal/power, battery thresholds (75%–90%), and Intel Wi-Fi + TCP BBR.
-4. Configures hibernation swap resume and native 1080p flicker-free GRUB.
-5. Applies the Fedora-style **Debian BGRT Plymouth** boot theme (default `text` watermark) + seamless silent boot & Early KMS, rebuilding GRUB and `initramfs` **once**.
-6. Calibrates the Realtek ALC298 internal microphone + Bluetooth A2DP SBC-XQ profile and installs the `thinkpad-audio-optimize.service` user login service.
-7. Prints a complete health & boot status summary.
-
-> **Standalone friendly:** All three Papirus PNG watermarks live in [`assets/`](assets/) *and* are embedded inside `thinkpad-debian-suite.sh` as an automatic fallback if you copy or run the script by itself.
+1. You have a working internet connection to install Debian packages.
+2. You have `sudo` or `pkexec` access on your user account.
+3. `git` is installed on your system. If `git` is not installed, run:
+   ```bash
+   sudo apt-get update && sudo apt-get install -y git
+   ```
 
 ---
 
-## Commands & Options
+## 4. Quick Start Procedure
+
+Follow these steps to download and run the full optimization suite.
+
+1. Open a terminal window.
+2. Clone this repository:
+   ```bash
+   git clone https://github.com/Antux912012/thinkpad-debian-suite.git
+   ```
+3. Open the repository folder:
+   ```bash
+   cd thinkpad-debian-suite
+   ```
+4. Make the script executable:
+   ```bash
+   chmod +x thinkpad-debian-suite.sh
+   ```
+5. Run the script:
+   ```bash
+   ./thinkpad-debian-suite.sh
+   ```
+6. Enter your password when `sudo` or `pkexec` asks for root permission.
+7. Wait until the script finishes all steps and shows the final status report.
+8. Restart the computer to apply all kernel, GRUB, Plymouth, and Early KMS changes:
+   ```bash
+   sudo systemctl reboot
+   ```
+
+> **NOTE:** If you copy `thinkpad-debian-suite.sh` to another folder without the `assets/` directory, the script still works. All three PNG watermark files are embedded inside the script as a fallback.
+
+---
+
+## 5. Commands and Options
+
+### 5.1 Command Syntax
 
 ```text
-Usage:
-  ./thinkpad-debian-suite.sh [command] [options]
-
-Commands:
-  all [variant]       (Default) Run FULL suite (system + BGRT Plymouth + audio)
-  system              Run ThinkPad system, NVMe, ZRAM, Wi-Fi, battery & GRUB tweaks only
-  audio [--apply]     Run Realtek ALC298 mic & Bluetooth A2DP optimizer (no root needed)
-  bgrt [variant]      Apply Fedora-style BGRT Plymouth theme + silent boot only
-  silent-boot         Apply seamless/silent GRUB + Early KMS boot optimization only
-  revert-bgrt         Revert BGRT Plymouth theme & silent boot back to original state
-  status              Show complete system, NVMe/ZRAM, audio, and Plymouth BGRT status
-  help                Show help message
-
-Options:
-  --variant <text|badge|swirl>   Select BGRT watermark variant (default: text)
-  --no-bgrt                      Skip BGRT Plymouth theme & silent boot during 'all'
-  --no-audio                     Skip user-session audio optimization during 'all'
-  --apply                        (With 'audio') Apply settings only; do not install service
-  --user <username>              Target desktop user for PipeWire audio optimization
+./thinkpad-debian-suite.sh [command] [options]
 ```
 
-### Examples
+### 5.2 Available Commands
+
+| Command | Root Required | Description |
+| :--- | :--- | :--- |
+| `all [variant]` | Yes (auto-elevates) | **Default.** Runs the full suite: system optimization, BGRT Plymouth theme, silent boot, and audio optimization. |
+| `system` | Yes (auto-elevates) | Runs only the ThinkPad system, NVMe, ZRAM, Wi-Fi, battery, and GRUB optimizations. |
+| `audio [--apply]` | No | Runs only the Realtek ALC298 microphone and Bluetooth A2DP optimizer. |
+| `bgrt [variant]` | Yes (auto-elevates) | Installs only the Fedora-style BGRT Plymouth theme and silent boot settings. |
+| `silent-boot` | Yes (auto-elevates) | Applies only the hidden GRUB menu, silenced loader text, and Early KMS settings. |
+| `revert-bgrt` | Yes (auto-elevates) | Removes the BGRT Plymouth theme and silent boot settings, then restores the previous configuration. |
+| `status` | No | Shows the current status of swap, ZRAM, THP, `sysctl`, battery thresholds, NVMe, audio, and Plymouth BGRT. |
+| `help` | No | Shows the command help message. |
+
+### 5.3 Available Options
+
+| Option | Description |
+| :--- | :--- |
+| `--variant <text\|badge\|swirl>` | Selects the Plymouth watermark variant. The default value is `text`. |
+| `--no-bgrt` | Skips the BGRT Plymouth theme and silent boot setup when you run `all`. |
+| `--no-audio` | Skips the PipeWire and ALSA audio setup when you run `all`. |
+| `--apply` | Used with `audio`. Applies the audio settings now, and does not install the user login service. |
+| `--user <username>` | Sets the desktop username for PipeWire audio configuration. |
+| `-h`, `--help` | Shows the command help message. |
+
+### 5.4 Watermark Variants
+
+| Variant | Description | Asset File |
+| :--- | :--- | :--- |
+| `text` | **Default.** Circular Papirus Debian badge with white `debian` text (`180x48` px). | `assets/watermark-badge-with-text.png` |
+| `badge` | Circular Papirus Debian badge without text (`64x64` px). | `assets/watermark-badge.png` |
+| `swirl` | Standalone Debian swirl in Papirus `#f9548f` color (`64x64` px). | `assets/watermark-swirl.png` |
+
+---
+
+## 6. Common Task Procedures
+
+### 6.1 Run the Full Suite with a Custom Watermark
+
+To use the minimalist `badge` watermark instead of `text`, run:
 
 ```bash
-# Run everything with the default Fedora-style Papirus badge + white 'debian' text
-./thinkpad-debian-suite.sh
-
-# Run everything with the minimalist 64x64 circular Papirus badge watermark
 ./thinkpad-debian-suite.sh all badge
+```
 
-# Run system + audio optimizations only, keeping your current Plymouth theme
+### 6.2 Run System and Audio Optimizations Without Changing Plymouth
+
+If you want to keep your current Plymouth boot theme, run:
+
+```bash
 ./thinkpad-debian-suite.sh --no-bgrt
+```
 
-# Run only the Realtek ALC298 mic & Bluetooth A2DP audio fix (no sudo required)
+### 6.3 Run Only the Audio Optimizer
+
+Run this command as your normal desktop user (do not use `sudo`):
+
+```bash
 ./thinkpad-debian-suite.sh audio
+```
 
-# Apply only the BGRT Plymouth theme with standalone swirl watermark
-sudo ./thinkpad-debian-suite.sh bgrt swirl
+This command calibrates the internal microphone and installs `thinkpad-audio-optimize.service` in `~/.config/systemd/user/`.
 
-# Roll back BGRT Plymouth theme, watermarks, GRUB drop-in, 10_linux & Early KMS
-sudo ./thinkpad-debian-suite.sh revert-bgrt
+### 6.4 Check System and Plymouth Status
 
-# Inspect all subsystem statuses without root
+To inspect all active settings without changing any file, run:
+
+```bash
 ./thinkpad-debian-suite.sh status
 ```
 
----
+### 6.5 Revert BGRT Plymouth and Silent Boot
 
-## What Is Included
+To restore your previous Plymouth theme, GRUB menu, and `/etc/initramfs-tools/modules`, run:
 
-### 1. System Packages & Intel VA-API Hardware Acceleration
-- Automatically enables `contrib` and `non-free` in `/etc/apt/sources.list.d/debian.sources` if needed.
-- Installs `thermald`, `zram-tools`, `nvme-cli`, `smartmontools`, `plymouth`, `plymouth-themes`, `vainfo`, `libva-drm2`, `libva-x11-2`, `alsa-utils`, and `intel-media-va-driver-non-free` (with `intel-media-va-driver` fallback).
-
-### 2. NVMe SSD Lifespan Protection
-- Adds `noatime,commit=60` to the root `/` `ext4` mount in `/etc/fstab` (with automatic backup) and remounts live.
-- Caps `systemd-journald` writes (`/etc/systemd/journald.conf.d/99-ssd-lifespan.conf`: `SystemMaxUse=200M`, `SyncIntervalSec=5m`).
-- Sets NVMe scheduler to `none`, `rq_affinity=2`, and PCI runtime PM to `auto` (`/etc/udev/rules.d/60-nvme-ssd-optimize.rules`).
-- Enables weekly `fstrim.timer`.
-
-### 3. Performance, ZRAM/Zswap, THP, Thermal & Battery Longevity
-- Configures `zstd`-compressed ZRAM swap (`PERCENT=25`, `PRIORITY=100`) and disables `zswap` (`zswap.enabled=0`) to avoid double compression.
-- Sets Transparent Hugepages to `madvise` / `defer+madvise` (`/etc/tmpfiles.d/thp-madvise.conf`).
-- Enables Intel HD Graphics `i915` (`enable_fbc=1`, `fastboot=1`) and `snd_hda_intel` 1s idle power-save (`/etc/modprobe.d/99-thinkpad-power.conf`).
-- Enables `thermald.service` and `power-profiles-daemon.service`.
-- Configures `suspend-then-hibernate` (120 min delay on battery) and intelligent lid handling (battery: `suspend-then-hibernate`, AC: `suspend`).
-- Enforces ThinkPad battery charge thresholds (**75% start / 90% end**) live and at boot via `thinkpad-battery-threshold.service`.
-
-### 4. Intel Dual Band Wireless-AC & Network Stack
-- Tunes `iwlwifi` (`11n_disable=8 power_save=0 uapsd_disable=3 bt_coex_active=1 swcrypto=0`) and `iwlmvm` (`power_scheme=1`) in `/etc/modprobe.d/99-iwlwifi-8265.conf`.
-- Disables NetworkManager Wi-Fi power saving (`/etc/NetworkManager/conf.d/99-wifi-powersave-off.conf`).
-- Enables `tcp_bbr` + `fq` queueing, `tcp_fastopen=3`, `tcp_mtu_probing=1`, 16 MB socket buffers, and VM/writeback tuning (`/etc/sysctl.d/99-thinkpad-performance-nvme-net.conf`).
-
-### 5. Fast Boot, 1080p GRUB & Fedora-Style Debian BGRT Plymouth
-- Disables `NetworkManager-wait-online.service` (~5.5s faster userspace boot).
-- Auto-detects swap partition UUID via `blkid` and configures both `/etc/initramfs-tools/conf.d/resume` and GRUB `resume=UUID=...`.
-- Configures native `1920x1080` GRUB with `GRUB_GFXPAYLOAD_LINUX=keep`.
-- Installs your chosen Papirus Debian watermark (`text`, `badge`, or `swirl`) into `/usr/share/plymouth/themes/spinner/watermark.png` and `/usr/share/plymouth/themes/bgrt/watermark.png`, sets the default Plymouth theme to `bgrt`, and backs up state in `/var/lib/plymouth-debian-bgrt/`.
-- Eliminates all four causes of boot flicker:
-  - Hidden GRUB menu (`/etc/default/grub.d/99-bgrt-silent.cfg`) — press/hold `Esc` or `Shift` at boot whenever you need the menu.
-  - Silenced `"Loading Linux..."` loader text (`quiet_boot="1"` in `/etc/grub.d/10_linux`).
-  - Hidden blinking console cursor and quiet kernel/udev logs (`vt.global_cursor_default=0 loglevel=3 systemd.show_status=auto rd.udev.log_level=3`).
-  - Early KMS GPU module (`i915`, `xe`, `amdgpu`, `radeon`, or `nouveau`) added to `/etc/initramfs-tools/modules`.
-
-### 6. Realtek ALC298 Microphone & Bluetooth A2DP Audio Optimizer
-- Calibrates `PCH` ALSA gains (`Internal Mic Boost=0`, `Capture=65%`) and PipeWire input volume (`0.60`) to eliminate +60 dB internal mic clipping.
-- Sets the built-in mic as default PipeWire input and switches Bluetooth (`bluez5`) headsets back to high-fidelity A2DP (`a2dp-sink-sbc_xq` / `a2dp-sink`).
-- Installs `~/.local/bin/thinkpad-audio-optimize` and enables `~/.config/systemd/user/thinkpad-audio-optimize.service` to re-apply automatically at every login.
-
----
-
-## Watermark Variants
-
-| Variant | Description | Asset |
-| :--- | :--- | :--- |
-| **`text`** *(Default)* | Fedora style: circular Papirus Debian badge + white `debian` typography (`180x48`) | `assets/watermark-badge-with-text.png` |
-| **`badge`** | Minimalist: circular Papirus Debian badge alone (`64x64`) | `assets/watermark-badge.png` |
-| **`swirl`** | Standalone Debian swirl in Papirus `#f9548f` (`64x64`) | `assets/watermark-swirl.png` |
-
-To regenerate PNG assets from the Papirus SVG icon theme:
 ```bash
-python3 scripts/generate-assets.py
+sudo ./thinkpad-debian-suite.sh revert-bgrt
 ```
 
+After the command finishes, restart the computer.
+
 ---
 
-## Credits & License
+## 7. What the Script Configures
 
-- **Author / Maintainer:** [Antonio De Gaetano (@Antux912012)](https://github.com/Antux912012)
-- **Merged Repositories:**
-  - [Antux912012/thinkpad-debian-optimizer](https://github.com/Antux912012/thinkpad-debian-optimizer)
-  - [Antux912012/debian-bgrt-plymouth](https://github.com/Antux912012/debian-bgrt-plymouth)
+### 7.1 Packages and Hardware Video Acceleration
+
+1. Enables `contrib` and `non-free` in `/etc/apt/sources.list.d/debian.sources` if they are missing.
+2. Installs `thermald`, `zram-tools`, `nvme-cli`, `smartmontools`, `plymouth`, `plymouth-themes`, `vainfo`, `libva-drm2`, `libva-x11-2`, and `alsa-utils`.
+3. Installs `intel-media-va-driver-non-free` (or `intel-media-va-driver` as a fallback) for Intel HD Graphics 620 hardware video acceleration.
+
+### 7.2 NVMe SSD Lifespan Protection
+
+1. Adds `noatime,commit=60` to the root `/` `ext4` entry in `/etc/fstab` (after creating a backup) and remounts `/`.
+2. Limits `systemd-journald` disk usage in `/etc/systemd/journald.conf.d/99-ssd-lifespan.conf` (`SystemMaxUse=200M`, `SyncIntervalSec=5m`).
+3. Creates `/etc/udev/rules.d/60-nvme-ssd-optimize.rules` to set `queue/scheduler=none`, `queue/rq_affinity=2`, and PCI runtime power management `auto`.
+4. Enables `fstrim.timer` for weekly SSD TRIM operations.
+
+### 7.3 Memory, ZRAM, Thermal, and Battery Longevity
+
+1. Disables kernel `zswap` and configures `zram-tools` in `/etc/default/zramswap` (`ALGO=zstd`, `PERCENT=25`, `PRIORITY=100`).
+2. Sets Transparent Hugepages to `madvise` and `defer+madvise` in `/etc/tmpfiles.d/thp-madvise.conf`.
+3. Enables `i915` framebuffer compression (`enable_fbc=1`), fastboot (`fastboot=1`), and `snd_hda_intel` power-save (`power_save=1`) in `/etc/modprobe.d/99-thinkpad-power.conf`.
+4. Enables `thermald.service` and `power-profiles-daemon.service`.
+5. Configures `suspend-then-hibernate` (`HibernateDelaySec=120min`) in `/etc/systemd/sleep.conf.d/suspend-then-hibernate.conf` and lid behavior in `/etc/systemd/logind.conf.d/lid.conf`.
+6. Sets ThinkPad battery charge thresholds to `75%` start and `90%` stop, and installs `thinkpad-battery-threshold.service` to apply them at each boot.
+
+### 7.4 Intel Wi-Fi and Network Stack
+
+1. Loads `tcp_bbr` and saves it in `/etc/modules-load.d/bbr.conf`.
+2. Configures `iwlwifi` (`11n_disable=8 power_save=0 uapsd_disable=3 bt_coex_active=1 swcrypto=0`) and `iwlmvm` (`power_scheme=1`) in `/etc/modprobe.d/99-iwlwifi-8265.conf`.
+3. Disables NetworkManager Wi-Fi power saving in `/etc/NetworkManager/conf.d/99-wifi-powersave-off.conf`.
+4. Writes VM and network tuning (`vm.swappiness=100`, `net.core.default_qdisc=fq`, `net.ipv4.tcp_congestion_control=bbr`) to `/etc/sysctl.d/99-thinkpad-performance-nvme-net.conf`.
+
+### 7.5 Fast Boot, GRUB, and BGRT Plymouth
+
+1. Disables `NetworkManager-wait-online.service` to remove startup delay.
+2. Detects the swap partition UUID with `blkid` and sets `RESUME=UUID=...` in `/etc/initramfs-tools/conf.d/resume` and `resume=UUID=...` in `/etc/default/grub`.
+3. Sets `GRUB_GFXMODE=1920x1080x32,1920x1080,auto` and `GRUB_GFXPAYLOAD_LINUX=keep` in `/etc/default/grub`.
+4. Installs the selected watermark to `/usr/share/plymouth/themes/spinner/watermark.png` and `/usr/share/plymouth/themes/bgrt/watermark.png`, and sets the Plymouth theme to `bgrt`.
+5. Creates `/etc/default/grub.d/99-bgrt-silent.cfg` to hide the GRUB menu and add silent boot kernel parameters (`quiet splash vt.global_cursor_default=0 loglevel=3 systemd.show_status=auto rd.udev.log_level=3`).
+6. Sets `quiet_boot="1"` in `/etc/grub.d/10_linux` and adds the detected GPU driver (`i915`, `xe`, `amdgpu`, `radeon`, or `nouveau`) to `/etc/initramfs-tools/modules` for Early KMS.
+7. Runs `update-grub` and `update-initramfs -u -k all`.
+
+### 7.6 Realtek ALC298 Microphone and Bluetooth Audio
+
+1. Sets ALSA `Internal Mic Boost` to `0` and `Capture` to `65%` on card `PCH`.
+2. Sets the internal microphone (`alsa_input.pci-0000_00_1f.3.analog-stereo`) as the default PipeWire source at volume `0.60`.
+3. Switches connected Bluetooth (`bluez5`) headsets to `a2dp-sink-sbc_xq` or `a2dp-sink`.
+4. Installs `~/.local/bin/thinkpad-audio-optimize` and enables `~/.config/systemd/user/thinkpad-audio-optimize.service`.
+
+---
+
+## 8. Regenerate Watermark PNG Assets
+
+If you want to rebuild the PNG files from the Papirus SVG source:
+
+1. Make sure that `papirus-icon-theme` and `python3-gi` are installed:
+   ```bash
+   sudo apt-get install -y papirus-icon-theme python3-gi gir1.2-gdkpixbuf-2.0
+   ```
+2. Run the generator script:
+   ```bash
+   python3 scripts/generate-assets.py
+   ```
+
+---
+
+## 9. Credits and License
+
+- **Author:** [Antonio De Gaetano (@Antux912012)](https://github.com/Antux912012)
+- **Source Repositories:**
+  - [thinkpad-debian-optimizer](https://github.com/Antux912012/thinkpad-debian-optimizer)
+  - [debian-bgrt-plymouth](https://github.com/Antux912012/debian-bgrt-plymouth)
 - **Papirus Icon Theme:** [PapirusDevelopmentTeam](https://github.com/PapirusDevelopmentTeam/papirus-icon-theme) (GPL-3.0)
 - **License:** [GNU General Public License v3.0](LICENSE)
