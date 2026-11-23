@@ -53,6 +53,8 @@ ACTION="all"
 BGRT_VARIANT="text"
 SKIP_BGRT=0
 SKIP_AUDIO=0
+SKIP_DNS=0
+ONLY_MODULES=""
 AUDIO_APPLY_ONLY=0
 TARGET_USER=""
 
@@ -275,15 +277,19 @@ ${BOLD}Usage:${RESET}
 
 ${BOLD}Commands:${RESET}
   ${GREEN}all${RESET} [variant]       (Default) Run FULL suite:
-                        1) ThinkPad system, NVMe, ZRAM, VA-API, battery, Wi-Fi & GRUB
+                        1) ThinkPad system, NVMe, ZRAM, VA-API, battery, Wi-Fi, DNS & GRUB
                         2) Fedora-style BGRT Plymouth theme + Papirus logo & silent boot
                         3) Realtek ALC298 mic & Bluetooth A2DP audio optimizer + user service
-  ${GREEN}system${RESET}              Run ThinkPad system, NVMe, ZRAM, Wi-Fi, battery & GRUB tweaks only
+  ${GREEN}gui${RESET}                 Open graphical/interactive selector to choose what to optimize
+  ${GREEN}network${RESET} | ${GREEN}net${RESET}       Optimize Wi-Fi, TCP/bufferbloat sysctl & DNS caching (DoT) only
+  ${GREEN}system${RESET}              Run ThinkPad system, NVMe, ZRAM, Wi-Fi, DNS, battery & GRUB tweaks
   ${GREEN}audio${RESET} [--apply]     Run Realtek ALC298 mic & Bluetooth A2DP optimizer (no root needed)
   ${GREEN}bgrt${RESET} [variant]      Apply Fedora-style BGRT Plymouth theme + silent boot only
   ${GREEN}silent-boot${RESET}         Apply seamless/silent GRUB + Early KMS boot optimization only
   ${GREEN}revert-bgrt${RESET}         Revert BGRT Plymouth theme & silent boot back to original state
-  ${GREEN}status${RESET}              Show complete system, NVMe/ZRAM, audio, and Plymouth BGRT status
+  ${GREEN}custom${RESET} --only ...   Run a comma-separated subset of modules (packages,nvme,power,
+                        network,dns,grub,bgrt,audio)
+  ${GREEN}status${RESET}              Show complete system, network/DNS, NVMe/ZRAM, audio, and BGRT status
   ${GREEN}help${RESET}                Show this help message
 
 ${BOLD}BGRT Watermark Variants:${RESET}
@@ -293,16 +299,20 @@ ${BOLD}BGRT Watermark Variants:${RESET}
 
 ${BOLD}Options:${RESET}
   --variant <text|badge|swirl>   Select BGRT watermark variant (default: text)
+  --only <m1,m2,...>             Run only listed modules (packages,nvme,power,network,dns,grub,bgrt,audio)
   --no-bgrt                      Skip BGRT Plymouth theme & silent boot during 'all'
   --no-audio                     Skip user-session audio optimization during 'all'
+  --no-dns                       Skip systemd-resolved Cloudflare DoT DNS caching setup
   --apply                        (With 'audio') Apply audio settings only; do not install service
   --user <username>              Target normal desktop user for PipeWire audio optimization
   -h, --help                     Show this help message
 
 ${BOLD}Examples:${RESET}
   ./thinkpad-debian-suite.sh                     # Run full suite (auto-elevates via sudo)
-  ./thinkpad-debian-suite.sh all badge           # Full suite with minimalist badge watermark
-  ./thinkpad-debian-suite.sh --no-bgrt           # System + audio only, keep current Plymouth
+  ./thinkpad-debian-suite.sh gui                 # Open interactive GTK4/Adwaita module selector
+  ./thinkpad-debian-suite.sh network             # Optimize Wi-Fi, TCP/bufferbloat & DoT DNS only
+  ./thinkpad-debian-suite.sh custom --only network,dns,audio
+  ./thinkpad-debian-suite.sh --no-bgrt           # System + network + audio, keep current Plymouth
   ./thinkpad-debian-suite.sh audio               # Audio calibration + login service only (no root)
   sudo ./thinkpad-debian-suite.sh bgrt swirl     # Apply BGRT Plymouth with swirl watermark only
   sudo ./thinkpad-debian-suite.sh revert-bgrt    # Revert BGRT Plymouth & silent boot
@@ -540,10 +550,11 @@ EOF
 }
 
 optimize_wifi_network() {
-    log_step "[System 4/5] Optimizing Intel Dual Band Wireless-AC & Network Stack"
+    log_step "[Network 1/2] Optimizing Intel Dual Band Wireless-AC, TCP Stack & Bufferbloat"
 
-    # Load TCP BBR congestion control module
-    modprobe tcp_bbr || true
+    # Load TCP BBR / FQ modules if built in this kernel
+    modprobe tcp_bbr 2>/dev/null || true
+    modprobe sch_fq 2>/dev/null || true
     mkdir -p /etc/modules-load.d
     echo "tcp_bbr" > /etc/modules-load.d/bbr.conf
 
@@ -602,8 +613,54 @@ net.ipv4.tcp_rmem = 4096 131072 16777216
 net.ipv4.tcp_wmem = 4096 65536 16777216
 net.core.netdev_max_backlog = 16384
 EOF
-    sysctl --system >/dev/null
-    log_ok "Intel Wi-Fi, TCP BBR/FQ & VM sysctl optimizations applied."
+
+    # Extra TCP bufferbloat, socket defaults & TIME-WAIT protection (works on all kernels)
+    cat <<'EOF' > /etc/sysctl.d/99-thinkpad-net-extra.conf
+# Reduce TCP upload bufferbloat, raise default socket buffers, harden TIME-WAIT
+net.ipv4.tcp_notsent_lowat = 131072
+net.ipv4.tcp_rfc1337 = 1
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.ipv4.ip_local_port_range = 16384 65535
+net.ipv4.tcp_max_syn_backlog = 4096
+EOF
+
+    # Apply sysctl; tolerate missing tcp_bbr/sch_fq on custom kernels that omit them
+    sysctl --system >/dev/null 2>&1 || true
+    sysctl -p /etc/sysctl.d/99-thinkpad-net-extra.conf >/dev/null
+
+    local active_cc active_qdisc
+    active_cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown)"
+    active_qdisc="$(sysctl -n net.core.default_qdisc 2>/dev/null || echo unknown)"
+    if [ "$active_cc" != "bbr" ]; then
+        log_info "Kernel built without tcp_bbr/sch_fq; using '${active_cc}' + '${active_qdisc}' with bufferbloat tuning."
+    fi
+    log_ok "Intel Wi-Fi, TCP/bufferbloat & VM sysctl optimizations applied."
+}
+
+optimize_dns_resolved() {
+    log_step "[Network 2/2] Configuring Local DNS Caching & DNS-over-TLS (systemd-resolved)"
+    export DEBIAN_FRONTEND=noninteractive
+
+    if ! dpkg -s systemd-resolved >/dev/null 2>&1; then
+        log_info "Installing systemd-resolved..."
+        apt-get update -qq
+        apt-get install -y -qq systemd-resolved
+    fi
+
+    mkdir -p /etc/systemd/resolved.conf.d
+    cat <<'EOF' > /etc/systemd/resolved.conf.d/99-cloudflare-dot.conf
+[Resolve]
+DNS=1.1.1.2#security.cloudflare-dns.com 1.0.0.2#security.cloudflare-dns.com 2606:4700:4700::1112#security.cloudflare-dns.com
+FallbackDNS=9.9.9.9#dns.quad9.net
+DNSOverTLS=opportunistic
+Cache=yes
+EOF
+
+    systemctl enable --now systemd-resolved || true
+    systemctl restart systemd-resolved || true
+    systemctl restart NetworkManager 2>/dev/null || true
+    log_ok "Local DNS cache + Cloudflare Malware-Blocking DoT enabled."
 }
 
 configure_thinkpad_grub_and_boot() {
@@ -1168,7 +1225,19 @@ show_status() {
     echo -e "\n${CYAN}--- Active Sysctl Values ---${RESET}"
     sysctl kernel.nmi_watchdog vm.swappiness vm.watermark_boost_factor vm.watermark_scale_factor \
         vm.vfs_cache_pressure vm.dirty_writeback_centisecs \
-        net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fastopen 2>/dev/null | sed 's/^/  /' || true
+        net.ipv4.tcp_congestion_control net.core.default_qdisc net.ipv4.tcp_fastopen \
+        net.ipv4.tcp_notsent_lowat net.ipv4.tcp_rfc1337 net.core.rmem_default net.core.wmem_default 2>/dev/null | sed 's/^/  /' || true
+
+    echo -e "\n${CYAN}--- DNS & Network Status ---${RESET}"
+    if command -v resolvectl >/dev/null 2>&1 && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+        echo -e "  systemd-resolved:      ${GREEN}Active${RESET} (Local DNS Cache + DoT)"
+        resolvectl status 2>/dev/null | grep -E 'Current DNS Server|DNSOverTLS|resolv\.conf mode' | sed 's/^[[:space:]]*/  /' || true
+    else
+        echo -e "  systemd-resolved:      ${YELLOW}Not active${RESET}"
+    fi
+    if [ -f /etc/NetworkManager/conf.d/99-wifi-powersave-off.conf ]; then
+        echo -e "  NM Wi-Fi PowerSave:    ${GREEN}Disabled (wifi.powersave = 2)${RESET}"
+    fi
 
     echo -e "\n${CYAN}--- Battery Charge Thresholds ---${RESET}"
     local found_bat=0
@@ -1281,6 +1350,241 @@ show_status() {
 }
 
 # ------------------------------------------------------------------------------
+# Selective Module Runner & Interactive GUI
+# ------------------------------------------------------------------------------
+has_module() {
+    case ",${ONLY_MODULES}," in
+        *,"$1",*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+run_selected_modules() {
+    local needs_root=0
+    local m
+    for m in packages nvme power network dns grub bgrt; do
+        if has_module "$m"; then
+            needs_root=1
+            break
+        fi
+    done
+
+    if [ "$needs_root" -eq 1 ]; then
+        ensure_root
+    fi
+
+    echo -e "${BOLD}==================================================================${RESET}"
+    echo -e "${BOLD} Lenovo ThinkPad Debian Suite — Custom Selection (${ONLY_MODULES})${RESET}"
+    echo -e "${BOLD}==================================================================${RESET}"
+
+    has_module "packages" && install_system_packages
+    has_module "nvme"     && optimize_nvme_ssd
+    has_module "power"    && optimize_power_zram_battery
+    has_module "network"  && optimize_wifi_network
+    has_module "dns"      && optimize_dns_resolved
+
+    local need_boot_rebuild=0
+    if has_module "grub" && has_module "bgrt"; then
+        configure_thinkpad_grub_and_boot 0
+        apply_bgrt_plymouth "$BGRT_VARIANT" 0
+        need_boot_rebuild=1
+    elif has_module "grub"; then
+        configure_thinkpad_grub_and_boot 1
+        need_boot_rebuild=1
+    elif has_module "bgrt"; then
+        apply_bgrt_plymouth "$BGRT_VARIANT" 0
+        need_boot_rebuild=1
+    fi
+
+    if [ "$need_boot_rebuild" -eq 1 ]; then
+        rebuild_boot_images
+    fi
+
+    has_module "audio" && run_audio_optimizer "$AUDIO_APPLY_ONLY"
+
+    echo ""
+    show_status
+    log_ok "Selected optimization tasks completed!"
+}
+
+launch_gui() {
+    local selection=""
+    local chosen_variant="$BGRT_VARIANT"
+
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v python3 >/dev/null 2>&1 && \
+       python3 -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1'); from gi.repository import Gtk, Adw" 2>/dev/null; then
+        local gui_out
+        gui_out="$(python3 - "$BGRT_VARIANT" <<'PYEOF'
+import sys
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gtk, Gio
+
+default_variant = sys.argv[1] if len(sys.argv) > 1 else "text"
+
+MODULES = [
+    ("packages", "System Packages & Intel iHD VA-API", "thermald, zram-tools, nvme-cli, smartmontools, plymouth, VA-API", True),
+    ("nvme",     "NVMe SSD Lifespan Protection",       "fstab noatime/commit=60, journald cap, udev scheduler, fstrim.timer", True),
+    ("power",    "Power, ZRAM, THP & Battery (75-90%)", "zstd ZRAM, zswap off, THP madvise, i915 FBC, suspend-then-hibernate", True),
+    ("network",  "Wi-Fi & TCP/Bufferbloat Tuning",     "iwlwifi/iwlmvm CAM, NM powersave off, tcp_notsent_lowat, rfc1337, BBR/FQ", True),
+    ("dns",      "Local DNS Cache & DNS-over-TLS",     "systemd-resolved with Cloudflare 1.1.1.2 Malware-Blocking DoT + caching", True),
+    ("grub",     "Fast Boot, Resume & 1080p GRUB",     "Disable NM-wait-online, swap resume UUID, 1920x1080 GRUB", True),
+    ("bgrt",     "Fedora-Style BGRT Plymouth & Silent Boot", "OEM logo + Papirus Debian watermark, hidden GRUB, Early KMS", True),
+    ("audio",    "ALC298 Mic & Bluetooth A2DP Fix",    "Calibrate internal mic boost, default source, BT SBC-XQ & login service", True),
+]
+
+class SuiteApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="io.github.Antux912012.ThinkPadSuiteGUI",
+                         flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.switches = {}
+        self.result_modules = None
+        self.result_variant = default_variant
+
+    def do_activate(self):
+        win = Adw.ApplicationWindow(application=self)
+        win.set_title("ThinkPad Debian Optimization Suite")
+        win.set_default_size(600, 660)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        win.set_content(root)
+
+        header = Adw.HeaderBar()
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda *_: win.close())
+        header.pack_start(cancel_btn)
+
+        apply_btn = Gtk.Button(label="Apply Selected")
+        apply_btn.add_css_class("suggested-action")
+        apply_btn.connect("clicked", lambda *_: self.on_apply(win))
+        header.pack_end(apply_btn)
+        root.append(header)
+
+        scroll = Gtk.ScrolledWindow(vexpand=True)
+        root.append(scroll)
+
+        clamp = Adw.Clamp(maximum_size=560, margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
+        scroll.set_child(clamp)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        clamp.set_child(content)
+
+        preset_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for label, keys in (
+            ("Select All", [m[0] for m in MODULES]),
+            ("Network Only", ["network", "dns"]),
+            ("System + Audio (No BGRT)", ["packages", "nvme", "power", "network", "dns", "grub", "audio"]),
+            ("Clear", []),
+        ):
+            btn = Gtk.Button(label=label)
+            btn.connect("clicked", lambda _b, ks=keys: self.set_preset(ks))
+            preset_box.append(btn)
+        content.append(preset_box)
+
+        group = Adw.PreferencesGroup(
+            title="Optimization Modules",
+            description="Choose which optimizations to apply to this ThinkPad."
+        )
+        content.append(group)
+
+        for key, title, subtitle, default_on in MODULES:
+            row = Adw.SwitchRow(title=title, subtitle=subtitle)
+            row.set_active(default_on)
+            self.switches[key] = row
+            group.add(row)
+
+        bgrt_group = Adw.PreferencesGroup(title="Plymouth BGRT Options")
+        content.append(bgrt_group)
+
+        variants = Gtk.StringList.new(["text", "badge", "swirl"])
+        self.variant_row = Adw.ComboRow(
+            title="Watermark Variant",
+            subtitle="text = Papirus badge + 'debian' | badge = icon only | swirl = swirl only",
+            model=variants
+        )
+        idx = {"text": 0, "badge": 1, "swirl": 2}.get(default_variant, 0)
+        self.variant_row.set_selected(idx)
+        bgrt_group.add(self.variant_row)
+
+        win.present()
+
+    def set_preset(self, keys):
+        key_set = set(keys)
+        for k, row in self.switches.items():
+            row.set_active(k in key_set)
+
+    def on_apply(self, win):
+        selected = [k for k, row in self.switches.items() if row.get_active()]
+        self.result_modules = ",".join(selected)
+        self.result_variant = ["text", "badge", "swirl"][self.variant_row.get_selected()]
+        win.close()
+
+app = SuiteApp()
+app.run(None)
+if app.result_modules:
+    print(f"{app.result_variant}|{app.result_modules}")
+PYEOF
+)" || true
+        if [ -z "$gui_out" ]; then
+            log_info "Selection cancelled or no modules chosen."
+            exit 0
+        fi
+        chosen_variant="${gui_out%%|*}"
+        selection="${gui_out#*|}"
+
+    elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null 2>&1; then
+        selection="$(zenity --list --checklist \
+            --title="ThinkPad Debian Optimization Suite" \
+            --text="Choose which optimizations to apply:" \
+            --width=650 --height=420 \
+            --column="Apply" --column="Module" --column="Description" \
+            TRUE "packages" "Core System Packages & Intel iHD VA-API" \
+            TRUE "nvme"     "NVMe SSD Lifespan (noatime, journald, udev, fstrim)" \
+            TRUE "power"    "Power, ZRAM, THP, Thermal & Battery (75-90%)" \
+            TRUE "network"  "Wi-Fi (iwlwifi/NM) & TCP/Bufferbloat sysctl" \
+            TRUE "dns"      "Local DNS Cache & Cloudflare DoT (systemd-resolved)" \
+            TRUE "grub"     "Fast Boot, Hibernation Resume & 1080p GRUB" \
+            TRUE "bgrt"     "Fedora-Style BGRT Plymouth & Silent Boot" \
+            TRUE "audio"    "Realtek ALC298 Mic & Bluetooth A2DP Fix" \
+            --separator="," 2>/dev/null || true)"
+        if [ -z "$selection" ]; then
+            log_info "Selection cancelled or no modules chosen."
+            exit 0
+        fi
+
+    elif command -v whiptail >/dev/null 2>&1; then
+        local raw_sel
+        raw_sel="$(whiptail --title "ThinkPad Debian Optimization Suite" \
+            --checklist "Choose which optimizations to apply (Space to toggle, Enter to run):" \
+            20 78 9 \
+            "packages" "Core System Packages & Intel iHD VA-API" ON \
+            "nvme"     "NVMe SSD Lifespan (noatime, journald, udev, fstrim)" ON \
+            "power"    "Power, ZRAM, THP, Thermal & Battery (75-90%)" ON \
+            "network"  "Wi-Fi (iwlwifi/NM) & TCP/Bufferbloat sysctl" ON \
+            "dns"      "Local DNS Cache & Cloudflare DoT (systemd-resolved)" ON \
+            "grub"     "Fast Boot, Hibernation Resume & 1080p GRUB" ON \
+            "bgrt"     "Fedora-Style BGRT Plymouth & Silent Boot" ON \
+            "audio"    "Realtek ALC298 Mic & Bluetooth A2DP Fix" ON \
+            3>&1 1>&2 2>&3 || true)"
+        selection="$(echo "$raw_sel" | tr -d '"' | tr ' ' ',')"
+        if [ -z "$selection" ]; then
+            log_info "Selection cancelled or no modules chosen."
+            exit 0
+        fi
+    else
+        log_error "No GUI/TUI toolkit (GTK4/Adwaita, zenity, or whiptail) available."
+        log_error "Use CLI instead: $0 custom --only network,dns,audio"
+        exit 1
+    fi
+
+    BGRT_VARIANT="$chosen_variant"
+    ONLY_MODULES="$selection"
+    ORIG_ARGS=(custom --only "$ONLY_MODULES" --variant "$BGRT_VARIANT")
+    run_selected_modules
+}
+
+# ------------------------------------------------------------------------------
 # Argument Parsing
 # ------------------------------------------------------------------------------
 ORIG_ARGS=("$@")
@@ -1296,12 +1600,24 @@ while [ $# -gt 0 ]; do
             BGRT_VARIANT="$2"
             shift 2
             ;;
+        --only)
+            if [ $# -lt 2 ]; then
+                log_error "--only requires a comma-separated list of modules."
+                exit 1
+            fi
+            ONLY_MODULES="$2"
+            shift 2
+            ;;
         --no-bgrt)
             SKIP_BGRT=1
             shift
             ;;
         --no-audio)
             SKIP_AUDIO=1
+            shift
+            ;;
+        --no-dns)
+            SKIP_DNS=1
             shift
             ;;
         --apply)
@@ -1353,6 +1669,7 @@ case "$ACTION" in
         optimize_nvme_ssd
         optimize_power_zram_battery
         optimize_wifi_network
+        [ "$SKIP_DNS" -eq 0 ] && optimize_dns_resolved
 
         if [ "$SKIP_BGRT" -eq 0 ]; then
             configure_thinkpad_grub_and_boot 0
@@ -1375,12 +1692,34 @@ case "$ACTION" in
         echo -e "${GREEN}${BOLD}==================================================================${RESET}"
         ;;
 
+    gui)
+        launch_gui
+        ;;
+
+    network|net)
+        ensure_root
+        optimize_wifi_network
+        [ "$SKIP_DNS" -eq 0 ] && optimize_dns_resolved
+        echo ""
+        show_status
+        log_ok "Network optimization completed successfully!"
+        ;;
+
+    custom)
+        if [ -z "$ONLY_MODULES" ]; then
+            log_error "custom requires --only <m1,m2,...> (or use '$0 gui')."
+            exit 1
+        fi
+        run_selected_modules
+        ;;
+
     system|thinkpad)
         ensure_root
         install_system_packages
         optimize_nvme_ssd
         optimize_power_zram_battery
         optimize_wifi_network
+        [ "$SKIP_DNS" -eq 0 ] && optimize_dns_resolved
         configure_thinkpad_grub_and_boot 1
         rebuild_boot_images
         echo ""

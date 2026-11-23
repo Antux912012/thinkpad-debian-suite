@@ -98,13 +98,16 @@ Follow these steps to download and run the full optimization suite.
 
 | Command | Root Required | Description |
 | :--- | :--- | :--- |
-| `all [variant]` | Yes (auto-elevates) | **Default.** Runs the full suite: system optimization, BGRT Plymouth theme, silent boot, and audio optimization. |
-| `system` | Yes (auto-elevates) | Runs only the ThinkPad system, NVMe, ZRAM, Wi-Fi, battery, and GRUB optimizations. |
+| `all [variant]` | Yes (auto-elevates) | **Default.** Runs the full suite: system optimization, network and DNS, BGRT Plymouth theme, silent boot, and audio optimization. |
+| `gui` | Elevates if needed | Opens an interactive GTK4/Libadwaita window (with `zenity` and `whiptail` fallbacks) to select which optimization modules to run. |
+| `network` \| `net` | Yes (auto-elevates) | Runs only the Wi-Fi, TCP/bufferbloat `sysctl`, and `systemd-resolved` DNS-over-TLS caching optimizations. |
+| `system` | Yes (auto-elevates) | Runs only the ThinkPad system, NVMe, ZRAM, Wi-Fi, DNS, battery, and GRUB optimizations. |
 | `audio [--apply]` | No | Runs only the Realtek ALC298 microphone and Bluetooth A2DP optimizer. |
 | `bgrt [variant]` | Yes (auto-elevates) | Installs only the Fedora-style BGRT Plymouth theme and silent boot settings. |
 | `silent-boot` | Yes (auto-elevates) | Applies only the hidden GRUB menu, silenced loader text, and Early KMS settings. |
 | `revert-bgrt` | Yes (auto-elevates) | Removes the BGRT Plymouth theme and silent boot settings, then restores the previous configuration. |
-| `status` | No | Shows the current status of swap, ZRAM, THP, `sysctl`, battery thresholds, NVMe, audio, and Plymouth BGRT. |
+| `custom --only ...` | If root module selected | Runs a comma-separated list of modules (`packages,nvme,power,network,dns,grub,bgrt,audio`). |
+| `status` | No | Shows the current status of swap, ZRAM, THP, `sysctl`, DNS, battery thresholds, NVMe, audio, and Plymouth BGRT. |
 | `help` | No | Shows the command help message. |
 
 ### 5.3 Available Options
@@ -112,8 +115,10 @@ Follow these steps to download and run the full optimization suite.
 | Option | Description |
 | :--- | :--- |
 | `--variant <text\|badge\|swirl>` | Selects the Plymouth watermark variant. The default value is `text`. |
+| `--only <m1,m2,...>` | Used with `custom`. Runs only the listed modules (`packages,nvme,power,network,dns,grub,bgrt,audio`). |
 | `--no-bgrt` | Skips the BGRT Plymouth theme and silent boot setup when you run `all`. |
 | `--no-audio` | Skips the PipeWire and ALSA audio setup when you run `all`. |
+| `--no-dns` | Skips `systemd-resolved` Cloudflare DoT DNS caching during `all`, `system`, or `network`. |
 | `--apply` | Used with `audio`. Applies the audio settings now, and does not install the user login service. |
 | `--user <username>` | Sets the desktop username for PipeWire audio configuration. |
 | `-h`, `--help` | Shows the command help message. |
@@ -130,7 +135,25 @@ Follow these steps to download and run the full optimization suite.
 
 ## 6. Common Task Procedures
 
-### 6.1 Run the Full Suite with a Custom Watermark
+### 6.1 Open the Interactive GUI Selector
+
+To choose which optimizations to apply in a graphical window, run:
+
+```bash
+./thinkpad-debian-suite.sh gui
+```
+
+Use the switches to enable or disable each module, or select a preset (**Select All**, **Network Only**, **System + Audio (No BGRT)**, **Clear**), then click **Apply Selected**.
+
+### 6.2 Run Network-Only Optimization
+
+To apply only the Wi-Fi, TCP/bufferbloat `sysctl`, and `systemd-resolved` DNS-over-TLS optimizations, run:
+
+```bash
+./thinkpad-debian-suite.sh network
+```
+
+### 6.3 Run the Full Suite with a Custom Watermark
 
 To use the minimalist `badge` watermark instead of `text`, run:
 
@@ -200,12 +223,14 @@ After the command finishes, restart the computer.
 5. Configures `suspend-then-hibernate` (`HibernateDelaySec=120min`) in `/etc/systemd/sleep.conf.d/suspend-then-hibernate.conf` and lid behavior in `/etc/systemd/logind.conf.d/lid.conf`.
 6. Sets ThinkPad battery charge thresholds to `75%` start and `90%` stop, and installs `thinkpad-battery-threshold.service` to apply them at each boot.
 
-### 7.4 Intel Wi-Fi and Network Stack
+### 7.4 Intel Wi-Fi, Network Stack, and DNS Caching
 
-1. Loads `tcp_bbr` and saves it in `/etc/modules-load.d/bbr.conf`.
+1. Loads `tcp_bbr` and `sch_fq` if available in the active kernel, and saves `tcp_bbr` in `/etc/modules-load.d/bbr.conf`.
 2. Configures `iwlwifi` (`11n_disable=8 power_save=0 uapsd_disable=3 bt_coex_active=1 swcrypto=0`) and `iwlmvm` (`power_scheme=1`) in `/etc/modprobe.d/99-iwlwifi-8265.conf`.
 3. Disables NetworkManager Wi-Fi power saving in `/etc/NetworkManager/conf.d/99-wifi-powersave-off.conf`.
 4. Writes VM and network tuning (`vm.swappiness=100`, `net.core.default_qdisc=fq`, `net.ipv4.tcp_congestion_control=bbr`) to `/etc/sysctl.d/99-thinkpad-performance-nvme-net.conf`.
+5. Writes extra TCP bufferbloat and socket hardening (`net.ipv4.tcp_notsent_lowat=131072`, `net.ipv4.tcp_rfc1337=1`, `net.core.rmem_default=262144`, `net.core.wmem_default=262144`, `net.ipv4.ip_local_port_range=16384 65535`, `net.ipv4.tcp_max_syn_backlog=4096`) to `/etc/sysctl.d/99-thinkpad-net-extra.conf`.
+6. Installs `systemd-resolved` and writes `/etc/systemd/resolved.conf.d/99-cloudflare-dot.conf` to enable local DNS caching and opportunistic DNS-over-TLS (`1.1.1.2#security.cloudflare-dns.com`).
 
 ### 7.5 Fast Boot, GRUB, and BGRT Plymouth
 
